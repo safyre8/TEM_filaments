@@ -1,8 +1,9 @@
-
 import orientation as orn
 import line_detection as ld
 
-#install PyWavelets and
+#install orientationpy with PIP
+
+
 def find_line_orientation():
     """
     Find the largest contoured shape in an image to detect the filaments present.
@@ -13,7 +14,9 @@ def find_line_orientation():
     Returns:
     plots of the orientation for the detected filaments
     """
+    # find largest contour and crop the image to find filaments
     ld.main()
+    # find the orientation of the dectected filaments
     orn.main()
 
 

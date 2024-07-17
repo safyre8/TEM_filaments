@@ -9,8 +9,9 @@ from skimage import filters
 import cv2
 import tifffile as tiff
 import orientationpy
-from matplotlib.gridspec import GridSpec
-from scipy import interpolate
+import setup_steerable as steerable
+# from matplotlib.gridspec import GridSpec
+# from scipy import interpolat
 
 
 def open_image(file_path):
@@ -93,10 +94,11 @@ def preprocess_image_for_orientation(image):
     # Apply Gaussian filter for smoothing
     image = filters.gaussian(image, sigma=0.5)
 
+
     # Ensure the image is 8-bit
     if image.dtype != np.uint8:
         image = cv2.normalize(image, None, 1, 255, cv2.NORM_MINMAX).astype(np.uint8)
-    cv2.bilateralFilter(image, 9, 75, 75)
+    # cv2.bilateralFilter(image, 9, 75, 75)
     # # Apply median filter
     # kernel_size = 3
     # image = cv2.medianBlur(image, kernel_size)
@@ -107,13 +109,13 @@ def preprocess_image_for_orientation(image):
     # return clahe_image
 
     # Adjust contrast and brightness to enhance shadows
-    alpha = 3  # Contrast control (1.0-3.0) - started with 1.5
-    beta = 20  # Brightness control (0-100)
-
-    adjusted_image = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
-
-    # Combine with original image for better visual quality
-    image = cv2.addWeighted(image, 0.5, adjusted_image, 0.5, 0)
+    # alpha = 3  # Contrast control (1.0-3.0) - started with 1.5
+    # beta = 20  # Brightness control (0-100)
+    #
+    # adjusted_image = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
+    #
+    # # Combine with original image for better visual quality
+    # image = cv2.addWeighted(image, 0.5, adjusted_image, 0.5, 0)
 
     return image
 
@@ -213,6 +215,7 @@ def plot_norm_energy_and_coherency(file_name, image, orientations):
 
     # Save the plot as a TIFF image
     name = os.path.splitext(file_name)[0]  # Get the file name without extension
+    print(sys.path[1])
     save_path = os.path.normpath(os.path.join(sys.path[1], "figure", "norm_energy_and_coherency"))
     os.makedirs(save_path, exist_ok=True)  # Create directories if they do not exist
     file_path = os.path.join(save_path, f"{name}_norm_energy_and_coherency.png")  # Use .png format for saving
@@ -271,7 +274,7 @@ def plot_orientation_layover(file_name, preprocessed_img, orientations):
     file_path = os.path.join(save_path, f"{name}_orientation_layover.png")
     plt.savefig(file_path, dpi=300)  # Save the entire figure as a high-resolution PNG
     print(f"+ orientation layover saved as tif")
-    # plt.show()
+    plt.show()
     return imDisplayRGB
 
 
@@ -321,7 +324,7 @@ def plot_orientation_boxes(file_name, preprocessed_img, orientations, gradient_G
         headlength=0,
         headaxislength=1,
     )
-    # plt.show()
+    plt.show()
     # Save the plot as a TIFF image
 
 
@@ -352,7 +355,7 @@ def plot_orientation_histogram(file_name, orientations):
     ax.set_title('Orientation Histogram')
     ax.set_xticks(np.arange(-90, 91, 30))  # Set x-ticks to cover the range from -90 to 90 degrees
     # Show the plot
-    # plt.show()
+    plt.show()
 
     # Save the plot as a TIFF image
     name = os.path.splitext(file_name)[0]  # Get the file name without extension
@@ -414,6 +417,7 @@ def main():
         print(f"+ Orientation histogram saved as tif")
 
         # plot_orientation_boxes(file_name, preprocessed_img, orientations, gradient_Gy, gradient_Gx)
+
         print(f"Orientation Iteration {iteration_count}: Processed {file_name} for line detection and orientation plotting.")
 
 
