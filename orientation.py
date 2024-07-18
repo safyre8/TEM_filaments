@@ -372,6 +372,7 @@ def plot_orientation_histogram(file_name, orientations):
 
 def main():
     data_folder = os.path.normpath(os.path.join(sys.path[1], "detected_filaments"))
+
     # Initialize a counter variable
     iteration_count = 0
 
@@ -416,7 +417,9 @@ def main():
         plot_orientation_histogram(file_name, orientations)
         print(f"+ Orientation histogram saved as tif")
 
-        # plot_orientation_boxes(file_name, preprocessed_img, orientations, gradient_Gy, gradient_Gx)
+        plot_orientation_boxes(file_name, preprocessed_img, orientations, gradient_Gy, gradient_Gx)
+        print(f"+ Orientation boxes vectors saved as tif")
+
 
         print(f"Orientation Iteration {iteration_count}: Processed {file_name} for line detection and orientation plotting.")
 

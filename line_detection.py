@@ -57,6 +57,7 @@ def preprocess_image(image):
     # Binarize the image using Otsu's thresholding
     thresh = filters.threshold_otsu(image)
     binary_image = image > thresh
+    display_image(binary_image)
 
     return binary_image
 
@@ -81,6 +82,7 @@ def create_contour_mask(image, contour):
 
     # Draw the contour on the mask
     cv2.drawContours(mask, [contour], -1, (255), thickness=cv2.FILLED)
+    display_image(mask)
 
     return mask
 
@@ -122,7 +124,6 @@ def detect_largest_shape(image):
         raise ValueError("No contours found in the image")
 
     largest_contour = max(contours, key=cv2.contourArea)
-    print(largest_contour)
 
     # Calculate the bounding box of the largest shape
     x, y, width, height = cv2.boundingRect(largest_contour)
@@ -236,7 +237,6 @@ def main():
         rescaled_image = crop_and_rescale_image(image_data, center_x, center_y, max(width, height) // 2)
         cropped_img = rescaled_image[0]
         print(f"+ Image masked and cropped")
-        display_image(cropped_img)
 
         filament_detected = detect_filament_orientation_ridge(cropped_img, file_name)
         print(f"+ filaments detected")
