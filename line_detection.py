@@ -57,7 +57,6 @@ def preprocess_image(image):
     # Binarize the image using Otsu's thresholding
     thresh = filters.threshold_otsu(image)
     binary_image = image > thresh
-    display_image(binary_image)
 
     return binary_image
 
@@ -82,9 +81,28 @@ def create_contour_mask(image, contour):
 
     # Draw the contour on the mask
     cv2.drawContours(mask, [contour], -1, (255), thickness=cv2.FILLED)
-    display_image(mask)
 
     return mask
+
+
+def apply_contour_mask(image, mask):
+    """
+    Apply the contour mask to the image.
+
+    Parameters:
+    - image (numpy.ndarray): Input image.
+    - mask (numpy.ndarray): Binary mask.
+
+    Returns:
+    - masked_image (numpy.ndarray): Image with the background masked out.
+    """
+    # Ensure the mask is binary (0 or 1)
+    binary_mask = mask // 255
+
+    # Apply the mask to the image
+    masked_image = cv2.bitwise_and(image, image, mask=binary_mask)
+
+    return masked_image
 
 
 def detect_largest_shape(image):
@@ -130,18 +148,43 @@ def detect_largest_shape(image):
     center_x, center_y = x + width // 2, y + height // 2
     largest_circle = (center_x, center_y, width, height)
 
-    return largest_circle
+    return largest_contour, largest_circle
 
 
-def crop_and_rescale_image(image, center_x, center_y, radius):
+def crop_and_rescale_image(image, center_x, center_y, radius, largest_contour):
     """
-    Take the mask from the largest circle detected to crop the image.
+    Crop the image based on the bounding box and apply a contour mask.
+
+    Parameters:
+    - image (numpy.ndarray): Input image.
+    - center_x (int): X-coordinate of the center of the bounding box.
+    - center_y (int): Y-coordinate of the center of the bounding box.
+    - radius (int): Radius of the bounding box.
+    - largest_contour (numpy.ndarray): Contour of the largest shape.
+
+    Returns:
+    - resized_image (numpy.ndarray): Resized image with the contour applied.
+    - mask (numpy.ndarray): Binary mask of the contour.
     """
     # Ensure the image is grayscale
     if image.ndim == 3 and image.shape[-1] == 3:
         image = color.rgb2gray(image)
 
-    # Define the region of interest (ROI) based on the detected circle
+    # Convert the image to 8-bit if it's not already
+    if image.dtype != np.uint8:
+         image = (image * 255).astype(np.uint8)
+
+    # Check if the contour is closed
+    if not cv2.isContourConvex(largest_contour):
+        # If the contour is not closed, apply morphological closing
+        kernel = np.ones((5, 5), np.uint8)
+        closed_image = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
+
+        # Find contours again on the closed image
+        contours, _ = cv2.findContours(closed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        largest_contour = max(contours, key=cv2.contourArea)
+
+    # Define the region of interest (ROI) based on the bounding box
     top_left_x = max(0, center_x - radius)
     top_left_y = max(0, center_y - radius)
     bottom_right_x = min(image.shape[1], center_x + radius)
@@ -150,22 +193,26 @@ def crop_and_rescale_image(image, center_x, center_y, radius):
     # Crop the image to the ROI
     cropped_image = image[top_left_y:bottom_right_y, top_left_x:bottom_right_x]
 
-    # Create a mask for the circle in the cropped image
-    circle_mask = np.zeros_like(cropped_image, dtype=np.uint8)
-    circle = cv2.circle(circle_mask, (radius, radius), radius, 255, -1)
-    display_image(circle)
+    # Create a mask from the largest contour
+    mask = create_contour_mask(image, largest_contour)
+    # display_image(mask)
+
+    # Crop the mask to the same ROI
+    cropped_mask = mask[top_left_y:bottom_right_y, top_left_x:bottom_right_x]
+
     # Apply the mask to the cropped image
-    masked_cropped_image = cv2.bitwise_and(cropped_image, cropped_image, mask=circle_mask)
+    masked_cropped_image = cv2.bitwise_and(cropped_image, cropped_image, mask=cropped_mask)
 
     if masked_cropped_image is None:
         print("Error: masked_cropped_image is None")
         return None, None  # Handle the error gracefully
 
-    #convert to an 8 bit image
+    # Convert to an 8-bit image and resize
     size = (768, 768)
     image_8bit = cv2.normalize(masked_cropped_image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
     resized_image = cv2.resize(image_8bit, size, interpolation=cv2.INTER_AREA)
-    return resized_image, circle_mask
+
+    return resized_image, cropped_mask
 
 
 def detect_filament_orientation_ridge(binary_image, file_name):
@@ -183,7 +230,8 @@ def detect_filament_orientation_ridge(binary_image, file_name):
     # Parameters
     # sigmas = range(4)  # Adjust sigma values as necessary
     # Adaptive histogram equalization
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    display_image(binary_image)
+    clahe = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(16, 16))
     equalized_image = clahe.apply(binary_image)
 
 
@@ -230,17 +278,19 @@ def main():
         binary_image = preprocess_image(image_data)
 
         # Detect the largest shape
-        center_x, center_y, width, height = detect_largest_shape(binary_image)
+        largest_contour, largest_circle = detect_largest_shape(binary_image)
+        center_x, center_y, width, height = largest_circle
         print(f"+ Detected largest shape with bounding box: center=({center_x}, {center_y}), width={width}, height={height}")
 
         # Crop and rescale the image based on the detected shape
-        rescaled_image = crop_and_rescale_image(image_data, center_x, center_y, max(width, height) // 2)
+        rescaled_image = crop_and_rescale_image(image_data, center_x, center_y, max(width, height) // 2, largest_contour)
         cropped_img = rescaled_image[0]
         print(f"+ Image masked and cropped")
 
         filament_detected = detect_filament_orientation_ridge(cropped_img, file_name)
         print(f"+ filaments detected")
         display_image(filament_detected)
+
         tiff.imwrite(filament_file_path, filament_detected, photometric='minisblack')
         print(f"+ Cropped image and mask saved as tif")
 

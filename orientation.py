@@ -355,7 +355,7 @@ def plot_orientation_histogram(file_name, orientations):
     ax.set_title('Orientation Histogram')
     ax.set_xticks(np.arange(-90, 91, 30))  # Set x-ticks to cover the range from -90 to 90 degrees
     # Show the plot
-    plt.show()
+    # plt.show()
 
     # Save the plot as a TIFF image
     name = os.path.splitext(file_name)[0]  # Get the file name without extension
@@ -417,7 +417,7 @@ def main():
         plot_orientation_histogram(file_name, orientations)
         print(f"+ Orientation histogram saved as tif")
 
-        plot_orientation_boxes(file_name, preprocessed_img, orientations, gradient_Gy, gradient_Gx)
+        # plot_orientation_boxes(file_name, preprocessed_img, orientations, gradient_Gy, gradient_Gx)
         print(f"+ Orientation boxes vectors saved as tif")
 
 
