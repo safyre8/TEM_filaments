@@ -209,10 +209,13 @@ def process_orientation_data(orientation_summary):
 
 
 def main():
-    data_folder = os.path.normpath(os.path.join(sys.path[1], "skeleton_filaments"))
+    data_folder = os.path.normpath(os.path.join(sys.path[1], "detected_filaments"))
 
     # Initialize a counter variable
     iteration_count = 0
+
+    # Initialize a dictionary to hold orientation data
+    orientation_summary = []
 
     # goes through each image in the data folder to determine the orientation data
     for file_name in os.listdir(data_folder):
@@ -224,7 +227,7 @@ def main():
 
         # Plot image gradients
         gradients = plot_image_gradients(image_data)
-        gradient_mode = 'gaussian'
+        gradient_mode = 'splines'
         print(f"+ Used {gradient_mode} gradient")
 
         # Initialize variables for Gy and Gx
@@ -240,14 +243,55 @@ def main():
         orientations = calculate_orientation(gradient_Gy, gradient_Gx)
         print(f"+ Found orientations")
 
-        plot_orientation = plotting.plot_orientation_layover(image_data, orientations)
-        plot_orientation.show()
+        _, detected_edges = cv2.threshold(orientations, 50, 255, cv2.THRESH_BINARY)
+
+
+
+        # Create a dictionary for this file's data
+        orientation_file = {
+            "file_name": file_name,
+            "date": file_name.split("_")[0],
+            "concentration": file_name.split("_")[1],
+            "lipid_composition": file_name.split("_")[2],
+            "septin_type": file_name.split("_")[3],
+            "theta": orientations["theta"],
+            "energy": orientations["energy"],
+            "coherency": orientations["coherency"],
+        }
+
+        # Append it to the list
+        orientation_summary.append(orientation_file)
+
         plot_histogram = plotting.plot_orientation_histogram(image_data, orientations)
-        plot_histogram.show()
-
+        save_plot(plot_histogram, file_name, "histogram")
+        plot_orientation_layover = plotting.plot_orientation_layover(file_name, image_data, orientations)
+        save_plot(plot_orientation_layover, file_name, "layover")
+        plot_energy = plotting.plot_norm_energy_and_coherency(image_data, orientations)
+        save_plot(plot_energy, file_name, "energy_coherency")
+        plot_orientation_box = plotting.plot_orientation_boxes(file_name, image_data, orientations, gradient_Gy, gradient_Gx)
+        save_plot(plot_orientation_box, file_name, "orientation_boxes")
         print(f"Orientation Iteration {iteration_count}: Processed {file_name} for orientation gradients.")
-        print(f"Line Iteration {iteration_count}: Processed {file_name} for line detection and orientation plotting.")
 
+    # for orientation in orientation_summary:
+    #     print(orientation)
+
+    # Plot circular histograms grouped by lipid and septin type
+    # Assuming `orientation_summary` is populated
+    # summary = plotting.plot_circular_histograms(orientation_summary)
+    # print(summary)
+    #
+    # # Save and display the figure for a specific lipid and septin type
+    # lipid_type = '95pc0ps5pip'
+    # septin_type = 'hex'
+    #
+    # if lipid_type in summary and septin_type in summary[lipid_type]:
+    #     fig = summary[lipid_type][septin_type]
+    #     fig.show()  # Activate the specific figure
+    #     plt.show()  # Display all active figures
+        print(f"Line Iteration {iteration_count}: Processed {file_name} for line detection and orientation plotting.")
+    df_orientation = process_orientation_data(orientation_summary)
+
+    return df_orientation
 
 if __name__ == "__main__":
     main()

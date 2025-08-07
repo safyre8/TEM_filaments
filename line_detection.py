@@ -1,13 +1,13 @@
 import os
 import sys
-import cv2
 import tifffile as tiff
+import cv2
 import numpy as np
-from skimage.filters import meijering, sato, frangi
-from skimage import filters, color
+from skimage import filters, color, img_as_float, exposure
+from skimage.filters import meijering, sato, frangi, hessian
 import matplotlib.pyplot as plt
-from skimage.restoration import estimate_sigma
-from skimage.util import img_as_float
+from concurrent.futures import ThreadPoolExecutor
+from skimage.filters import gaussian
 
 def open_image(file_path):
     """
@@ -22,200 +22,83 @@ def open_image(file_path):
     image = tiff.imread(file_path)
     return image
 
-def display_image(image):
-    # Ensure the image data is within the valid range for display
-    if np.issubdtype(image.dtype, np.floating):
-        image = np.clip(image, 0, 1)
-    else:
-        image = np.clip(image, 0, 255)
-    plt.imshow(image, cmap='gray')
-    plt.show()
 
-def adaptive_noise_estimation(image):
-    image_float = img_as_float(image)
-    sigma_est = estimate_sigma(image_float, average_sigmas=True)
-    return sigma_est
+def display_image(image, title=""):
+    """Display an image."""
+    plt.imshow(image, cmap='gray')
+    plt.title(title)
+    plt.axis('off')
+    plt.show()
 
 
 def preprocess_image(image):
-    """
-    Preprocess the input image.
+    """Preprocess the input image: downsample, denoise, and normalize."""
+    # Downsample for faster processing
+    image_resized = cv2.resize(image, (image.shape[1] // 2, image.shape[0] // 2))
 
-    Args:
-    - image (ndarray): Input image data.
+    # Normalize image to range [0, 1]
+    image_normalized = img_as_float(image_resized)
 
-    Returns:
-    - ndarray: Preprocessed image data.
-    """
-    # Convert to grayscale if necessary
-    if image.ndim == 3 and image.shape[-1] == 3:
-        image = color.rgb2gray(image)
+    # Apply Gaussian denoising
+    image_denoised = filters.gaussian(image_normalized, sigma=0.5)
 
-    # Apply Gaussian blur for denoising
-    image = filters.gaussian(image, sigma=0.1)
-
-    # Binarize the image using Otsu's thresholding
-    thresh = filters.threshold_otsu(image)
-    binary_image = image > thresh
-
-    return binary_image
+    return image_denoised
 
 
-def create_contour_mask(image, contour):
-    """
-    Create a binary mask from the largest contour.
-
-    Parameters:
-    - image (numpy.ndarray): Input image.
-    - contour (numpy.ndarray): Largest contour.
-
-    Returns:
-    - mask (numpy.ndarray): Binary mask with the contour.
-    """
-    # Create a blank mask with the same dimensions as the image
-    mask = np.zeros_like(image, dtype=np.uint8)
-
-    # If the image is not grayscale, convert it to grayscale to match the mask
-    if len(image.shape) == 3:
-        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-
-    # Draw the contour on the mask
-    cv2.drawContours(mask, [contour], -1, (255), thickness=cv2.FILLED)
-
-    return mask
-
-
-def apply_contour_mask(image, mask):
-    """
-    Apply the contour mask to the image.
-
-    Parameters:
-    - image (numpy.ndarray): Input image.
-    - mask (numpy.ndarray): Binary mask.
-
-    Returns:
-    - masked_image (numpy.ndarray): Image with the background masked out.
-    """
-    # Ensure the mask is binary (0 or 1)
-    binary_mask = mask // 255
-
-    # Apply the mask to the image
-    masked_image = cv2.bitwise_and(image, image, mask=binary_mask)
-
-    return masked_image
-
-
-def detect_largest_shape(image):
-    """
-    Detects the largest enclosed shape in an 8-bit image.
-
-    Parameters:
-    image (numpy.ndarray): Input 8-bit grayscale image.
-
-    Returns:
-    tuple: (center_x, center_y, width, height) of the bounding box of the largest shape.
-    """
-    # Convert the image to grayscale if it is RGB
-    if len(image.shape) == 3:
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    # Check if the image is 8-bit
-    if image.dtype != np.uint8:
-        image = (image * 255).astype(np.uint8)
-
-    # Step 1: Threshold the image to create a binary image
-    # Adaptive histogram equalization
+def apply_clahe(image):
+    """Apply CLAHE for contrast enhancement."""
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    equalized_image = clahe.apply(image)
-
-    # Sharpen the equalized image
-    sharpening_kernel = np.array([[-1, -1, -1],
-                                  [-1, 9, -1],
-                                  [-1, -1, -1]])
-    sharpened_image = cv2.filter2D(equalized_image, -1, sharpening_kernel)
-
-    # Step 2: Find contours
-    contours, _ = cv2.findContours(sharpened_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Step 3: Find largest contour
-    if not contours:
-        raise ValueError("No contours found in the image")
-
-    largest_contour = max(contours, key=cv2.contourArea)
-
-    # Calculate the bounding box of the largest shape
-    x, y, width, height = cv2.boundingRect(largest_contour)
-    center_x, center_y = x + width // 2, y + height // 2
-    largest_circle = (center_x, center_y, width, height)
-
-    return largest_contour, largest_circle
+    return clahe.apply(image)
 
 
-def crop_and_rescale_image(image, center_x, center_y, radius, largest_contour):
-    """
-    Crop the image based on the bounding box and apply a contour mask.
-
-    Parameters:
-    - image (numpy.ndarray): Input image.
-    - center_x (int): X-coordinate of the center of the bounding box.
-    - center_y (int): Y-coordinate of the center of the bounding box.
-    - radius (int): Radius of the bounding box.
-    - largest_contour (numpy.ndarray): Contour of the largest shape.
-
-    Returns:
-    - resized_image (numpy.ndarray): Resized image with the contour applied.
-    - mask (numpy.ndarray): Binary mask of the contour.
-    """
-    # Ensure the image is grayscale
-    if image.ndim == 3 and image.shape[-1] == 3:
-        image = color.rgb2gray(image)
-
-    # Convert the image to 8-bit if it's not already
-    if image.dtype != np.uint8:
-         image = (image * 255).astype(np.uint8)
-
-    # Check if the contour is closed
-    if not cv2.isContourConvex(largest_contour):
-        # If the contour is not closed, apply morphological closing
-        kernel = np.ones((5, 5), np.uint8)
-        closed_image = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
-
-        # Find contours again on the closed image
-        contours, _ = cv2.findContours(closed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        largest_contour = max(contours, key=cv2.contourArea)
-
-    # Define the region of interest (ROI) based on the bounding box
-    top_left_x = max(0, center_x - radius)
-    top_left_y = max(0, center_y - radius)
-    bottom_right_x = min(image.shape[1], center_x + radius)
-    bottom_right_y = min(image.shape[0], center_y + radius)
-
-    # Crop the image to the ROI
-    cropped_image = image[top_left_y:bottom_right_y, top_left_x:bottom_right_x]
-
-    # Create a mask from the largest contour
-    mask = create_contour_mask(image, largest_contour)
-    # display_image(mask)
-
-    # Crop the mask to the same ROI
-    cropped_mask = mask[top_left_y:bottom_right_y, top_left_x:bottom_right_x]
-
-    # Apply the mask to the cropped image
-    masked_cropped_image = cv2.bitwise_and(cropped_image, cropped_image, mask=cropped_mask)
-
-    if masked_cropped_image is None:
-        print("Error: masked_cropped_image is None")
-        return None, None  # Handle the error gracefully
-
-    # Convert to an 8-bit image and resize
-    size = (768, 768)
-    image_8bit = cv2.normalize(masked_cropped_image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-    resized_image = cv2.resize(image_8bit, size, interpolation=cv2.INTER_AREA)
-
-    return resized_image, cropped_mask
+def subtract_background(image):
+    """Subtract the background using Gaussian blur."""
+    # Estimate background
+    background = cv2.GaussianBlur(image, (21, 21), 0)
+    # Subtract and normalize
+    subtracted = cv2.subtract(image, background)
+    return subtracted
 
 
-def detect_filament_orientation_ridge(binary_image, file_name):
+def filter_image(image, method, sigma):
+    """Apply filament detection using specified method and sigma."""
+    methods = {
+        'meijering': meijering,
+        'sato': sato,
+        'frangi': frangi,
+        'hessian': hessian,
+    }
+    if method not in methods:
+        raise ValueError(f"Unsupported method: {method}")
+
+    return methods[method](image, sigmas=[sigma], black_ridges=False, mode='reflect')
+
+
+def process_filaments(image, method, sigma_range):
+    """Run filament detection in parallel across sigma values."""
+    results = []
+    with ThreadPoolExecutor() as executor:
+        futures = {executor.submit(filter_image, image, method, sigma): sigma for sigma in sigma_range}
+        for future in futures:
+            result = future.result()
+            results.append(result)
+    return results
+
+
+def isolate_filaments(image, filtered_image, threshold=0.1):
+    """Threshold and clean up filament mask."""
+    _, binary_mask = cv2.threshold(filtered_image.astype(np.float32), threshold, 1, cv2.THRESH_BINARY)
+    binary_mask = (binary_mask * 255).astype(np.uint8)
+
+    # Clean mask with morphological operations
+    kernel = np.ones((3, 3), np.uint8)
+    cleaned_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel, iterations=2)
+
+    # Apply the mask to the original image
+    return cv2.bitwise_and(image, image, mask=cleaned_mask)
+
+
+def detect_filament_orientation_ridge(image):
     """
     Detect filament orientation by calculating the orientation from the eigenvalues
     of the Hessian matrix. If you're have issues with filament detection do a parameter run
@@ -227,29 +110,25 @@ def detect_filament_orientation_ridge(binary_image, file_name):
     Returns:
     numpy.ndarray: Array representing the orientation of filaments.
     """
-    # Parameters
-    # sigmas = range(4)  # Adjust sigma values as necessary
-    # Adaptive histogram equalization
-    display_image(binary_image)
-    clahe = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(16, 16))
-    equalized_image = clahe.apply(binary_image)
-
-
-    # equalized_image = adaptive_noise_estimation(binary_image)
 
     # Apply the Meijering filtering method
-    # detected_result = meijering(equalized_image, sigmas=range(1, 4), black_ridges=False, mode='reflect')
+    detected_result = meijering(image, sigmas=range(2, 4), black_ridges=False, mode='reflect')
 
-    # Apply the sato filtering method
-    detected_result = sato(equalized_image, sigmas=range(1, 4), black_ridges=False, mode='reflect')
+    return detected_result
 
-    # # Apply the sato filtering method
-    detected_combined_result = frangi(detected_result, sigmas=range(4), black_ridges=False, mode='reflect')
 
-    print(f"+ Finished plotting the line detection for {file_name}")
+def run_parameter_sweep(image, filament_file_path, name, methods=('meijering', 'sato', 'frangi', 'hessian'), sigma_range=range(1, 6)):
+    """Run a sweep across methods and sigma values, saving results."""
+    for method in methods:
+        print(f"Processing {method} method...")
+        results = process_filaments(image, method, sigma_range)
 
-    return detected_combined_result
+        for sigma, result in zip(sigma_range, results):
+            result_filename = f"{name}_{method}_sigma_{sigma}.tiff"
+            save_path = os.path.join(filament_file_path, result_filename)
+            tiff.imwrite(save_path, (result * 255).astype(np.uint8), photometric='minisblack')
 
+            print(f"Saved result: {result_filename}")
 
 def main():
     data_folder = os.path.normpath(os.path.join(sys.path[1], "data"))
@@ -265,36 +144,28 @@ def main():
         save_path = os.path.normpath(os.path.join(sys.path[1], "detected_filaments"))
         filament_file_path = os.path.join(save_path, f"{name}_detecting_filament_sato.tif")
 
-        # load image
+        # Load image
         file_path = os.path.join(data_folder, file_name)
         image_data = open_image(file_path)
 
         if image_data is None:
-            print("Error loading image")
-            return
+            print(f"Error loading {file_name}. Skipping...")
+            continue
 
-        print(f"+ Opened {name}")
+        image_preprocessed = preprocess_image(image_data)
 
-        binary_image = preprocess_image(image_data)
+        filament_detected = detect_filament_orientation_ridge(image_preprocessed)
+        smoothed_img = gaussian(filament_detected, sigma=2)
 
-        # Detect the largest shape
-        largest_contour, largest_circle = detect_largest_shape(binary_image)
-        center_x, center_y, width, height = largest_circle
-        print(f"+ Detected largest shape with bounding box: center=({center_x}, {center_y}), width={width}, height={height}")
+        print(f"Completed processing for {file_name}")
 
-        # Crop and rescale the image based on the detected shape
-        rescaled_image = crop_and_rescale_image(image_data, center_x, center_y, max(width, height) // 2, largest_contour)
-        cropped_img = rescaled_image[0]
-        print(f"+ Image masked and cropped")
+        print(f"+ Filaments detected")
 
-        filament_detected = detect_filament_orientation_ridge(cropped_img, file_name)
-        print(f"+ filaments detected")
-        display_image(filament_detected)
-
-        tiff.imwrite(filament_file_path, filament_detected, photometric='minisblack')
-        print(f"+ Cropped image and mask saved as tif")
+        tiff.imwrite(filament_file_path, smoothed_img, photometric='minisblack')
+        print(f"+ Combined image and mask saved as tif")
 
         print(f"Line Iteration {iteration_count}: Processed {file_name} for line detection and orientation plotting.")
+
 
 if __name__ == "__main__":
     main()
